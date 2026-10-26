@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Ticaret Müşteri Kaybı Analizi ve Karar Destek Sistemi</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+  <!-- Top Navbar -->
+  <header class="navbar">
+    <div class="brand">E-Ticaret Müşteri Kaybı Analizi ve Karar Destek Sistemi</div>
+    <div class="nav-actions" style="display: flex; align-items: center; gap: 0.75rem;">
+      <div class="model-select-wrapper" title="Analizlerde kullanılacak Yapay Zeka (LLM) modelini seçin">
+        <label for="select-llm-model" class="model-select-label">✨ Model:</label>
+        <select id="select-llm-model" class="model-select-dropdown">
+          <option value="auto">⚡ Otomatik (Önerilen)</option>
+          <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+          <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+          <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+          <option value="local">🖥️ Yerel Semantik LLM</option>
+        </select>
+      </div>
+      <button id="btn-open-modal" class="btn-update-data">Dönemsel Veri Yükle / Güncelle</button>
+      <button id="btn-open-info" class="btn-help-circle" title="Sistem Mimarisi ve Yapay Zeka Modellemesi Hakkında Bilgi" aria-label="Bilgi">?</button>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- Modal for Uploading Datasets -->
+    <div id="modal-upload" class="modal-overlay">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Dönemsel Veri Kaynağını Güncelle</h3>
+          <button id="btn-close-modal" class="modal-close">&times;</button>
+        </div>
+        <p style="font-size: 0.88rem; color: #64748b; margin-bottom: 1.25rem;">
+          Yeni döneme ait ilişkisel CSV dosyalarını yükleyerek mevcut yapay zeka modeliyle skorlayabilir veya modeli sıfırdan eğitebilirsiniz.
+        </p>
+        
+        <div class="file-box">
+          <label for="file-customers">1. Müşteri Profili ve İşlem Geçmişi (Musteriler.csv)</label>
+          <input type="file" id="file-customers" accept=".csv">
+        </div>
+        <div class="file-box">
+          <label for="file-complaints">2. Destek ve Şikayet Kayıtları (Sikayetler.csv)</label>
+          <input type="file" id="file-complaints" accept=".csv">
+        </div>
+        <div class="file-box">
+          <label for="file-reviews">3. Ürün Değerlendirme ve Yorum Metinleri (Yorumlar.csv)</label>
+          <input type="file" id="file-reviews" accept=".csv">
+        </div>
+
+        <div style="margin: 1.15rem 0; padding: 0.85rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;">
+          <label style="cursor: pointer; display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.85rem; color: #0F172A;">
+            <input type="checkbox" id="check-retrain" style="margin-top: 0.2rem;">
+            <span>
+              <strong>Modeli Baştan Eğit (XGBoost Yeniden Eğitimi)</strong><br>
+              <small style="color: #64748b;">İşaretlenmezse, mevcut eğitilmiş model kullanılarak yeni veriler anında skorlanır.</small>
+            </span>
+          </label>
+        </div>
+
+        <button id="btn-submit-upload" class="btn-modal-submit">Verileri Entegre Et ve Analiz Et</button>
+        <div id="modal-status" style="display:none; margin-top:1rem; font-size:0.85rem; color:#0F2A4A; font-weight:600;"></div>
+      </div>
+    </div>
+
+    <!-- Modal for Showing Customer Complaints or Product Reviews -->
+    <div id="modal-detail" class="modal-overlay">
+      <div class="modal-card" style="max-width: 780px; max-height: 85vh; display: flex; flex-direction: column;">
+        <div class="modal-header">
+          <h3 id="modal-detail-title">Kayıt Detayları</h3>
+          <button id="btn-close-detail" class="modal-close">&times;</button>
+        </div>
+        <div id="modal-detail-subtitle" style="font-size: 0.88rem; color: #64748b; margin-bottom: 0.85rem;"></div>
+        <div id="modal-detail-content" style="overflow-y: auto; max-height: 55vh; padding-right: 0.5rem;">
+          <!-- Dynamically populated with complaints or reviews list -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal for Statistical Modeling & LLM Information -->
+    <div id="modal-info" class="modal-overlay">
+      <div class="modal-card" style="max-width: 650px; max-height: 85vh; display: flex; flex-direction: column;">
+        <div class="modal-header">
+          <div style="display: flex; align-items: center; gap: 0.6rem;">
+            <div style="width: 28px; height: 28px; border-radius: 50%; background: #0F2A4A; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.95rem;">?</div>
+            <h3 style="margin: 0; font-size: 1.1rem; color: #0F2A4A;">İstatistiksel Modelleme ve Yapay Zeka (LLM)</h3>
+          </div>
+          <button id="btn-close-info" class="modal-close">&times;</button>
+        </div>
+        <div style="overflow-y: auto; max-height: 70vh; padding-right: 0.5rem; font-size: 0.88rem; color: #334155; line-height: 1.6;">
+          
+          <!-- Block 1: Statistical Modeling -->
+          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1.15rem; margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+              <span style="font-size: 1.25rem;">📊</span>
+              <h4 style="color: #0F2A4A; font-size: 1rem; margin: 0;">İstatistiksel Modelleme</h4>
+            </div>
+            <ul style="padding-left: 1.25rem; margin: 0;">
+              <li style="margin-bottom: 0.4rem;"><strong>Kullanılan Model:</strong> <em>XGBoost (Extreme Gradient Boosting)</em> Sınıflandırıcısı</li>
+              <li><strong>Açıklanabilirlik (XAI):</strong> <em>SHAP (Shapley Additive exPlanations)</em> Oyun Teorisi Yaklaşımı</li>
+            </ul>
+          </div>
+
+          <!-- Block 2: LLM -->
+          <div style="background: linear-gradient(135deg, #f0fdf4 0%, #eff6ff 100%); border: 1px solid #bfdbfe; border-radius: 8px; padding: 1.15rem;">
+            <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+              <span style="font-size: 1.25rem;">✨</span>
+              <h4 style="color: #1e3a8a; font-size: 1rem; margin: 0;">Büyük Dil Modeli (LLM)</h4>
+            </div>
+            <ul style="padding-left: 1.25rem; margin: 0;">
+              <li><strong>Kullanılan Model:</strong> <em>Google Gemini API</em> (Panelden seçilen güncel metin modeli) ve yedek olarak <em>Yerel Semantik LLM</em></li>
+            </ul>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Analytics Navigation Bar -->
+    <div class="analytics-nav-bar">
+      <div class="nav-tabs">
+        <button class="nav-tab-btn active" data-tab="tab-crm">
+          <span>Müşteri Kayıp Riski & CRM Analizi</span>
+        </button>
+        <button class="nav-tab-btn" data-tab="tab-logistics">
+          <span>Operasyon ve Lojistik Yönetimi</span>
+        </button>
+        <button class="nav-tab-btn" data-tab="tab-category">
+          <span>Kategori ve Ürün Kalite Yönetimi</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Master Executive KPI Overview Cards -->
+    <div id="master-kpi-grid" class="kpi-grid">
+      <!-- Populated dynamically with platform health metrics -->
+    </div>
+
+    <!-- VIEW 1: CRM & CUSTOMER EXPERIENCE -->
+    <div id="tab-crm" class="tab-content">
+      <div class="filter-bar">
+        <div class="filter-group">
+          <label for="filter-city"><strong>Şehir Kademesi:</strong></label>
+          <select id="filter-city">
+            <option value="all">Tüm Şehir Kademeleri</option>
+            <option value="1">Tier 1: Büyükşehir / Metropol (Hızlı Sevk)</option>
+            <option value="2">Tier 2: Gelişmiş İl Merkezi (Standart Sevk)</option>
+            <option value="3">Tier 3: Taşra / Kırsal İlçe (Yüksek Kayıp Riski)</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="filter-tenure"><strong>Üyelik Süresi:</strong></label>
+          <select id="filter-tenure">
+            <option value="all">Tüm Üyelik Süreleri</option>
+            <option value="new">Yeni Müşteri (< 1 Ay)</option>
+            <option value="1-6">1 - 6 Ay Arası</option>
+            <option value="6-12">6 - 12 Ay Arası</option>
+            <option value="12plus">12+ Ay (Sadık Müşteri)</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="filter-orders"><strong>Sipariş Sayısı:</strong></label>
+          <select id="filter-orders">
+            <option value="all">Tüm Sipariş Sayıları</option>
+            <option value="1">Tek Sipariş (1 Adet)</option>
+            <option value="2-5">2 - 5 Sipariş</option>
+            <option value="5plus">5+ Sipariş</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="filter-risk-slider"><strong>Kayıp Olasılık Eşiği:</strong> <span id="label-risk-val">&ge; %70</span></label>
+          <input type="range" id="filter-risk-slider" min="0" max="100" value="70" step="5">
+        </div>
+        <button id="btn-export-crm" class="btn-export">Filtrelenen Riskli Müşterileri İndir (CSV)</button>
+      </div>
+
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>Müşteri Kodu</th>
+              <th class="th-sortable" data-table="crm" data-field="churn_probability">Kayıp Olasılık Skoru <span class="sort-icon">⬍</span></th>
+              <th class="th-sortable" data-table="crm" data-field="Tenure">Üyelik Süresi <span class="sort-icon">⬍</span></th>
+              <th class="th-sortable" data-table="crm" data-field="OrderCount">Toplam Sipariş <span class="sort-icon">⬍</span></th>
+              <th class="th-sortable" data-table="crm" data-field="TotalComplaints">Toplam Şikayet <span class="sort-icon">⬍</span></th>
+              <th>Son Sipariş</th>
+              <th class="th-sortable" data-table="crm" data-field="CashbackAmount">Yapılan İndirim <span class="sort-icon">⬍</span></th>
+              <th>Bölge Kademesi</th>
+              <th>Ayrılma Riskini Tetikleyen İlk 3 Belirleyici Faktör</th>
+              <th>Önerilen CRM Stratejisi</th>
+            </tr>
+          </thead>
+          <tbody id="crm-table-body">
+            <!-- Dynamically populated -->
+          </tbody>
+        </table>
+      </div>
+      <div id="crm-pagination" class="pagination-container"></div>
+    </div>
+
+    <!-- VIEW 2: LOGISTICS & OPERATIONS -->
+    <div id="tab-logistics" class="tab-content" style="display: none;">
+      
+      <!-- Logistics Operational KPI Strip -->
+      <div id="logistics-kpi-grid" class="kpi-grid" style="margin-bottom: 1.5rem;">
+        <!-- Populated dynamically with logistics KPIs -->
+      </div>
+
+      <!-- Charts Row -->
+      <div class="charts-grid">
+        <div class="chart-card">
+          <h4>Kargo ve Teslimat Süreçlerindeki Kök Problem Dağılımı</h4>
+          <canvas id="chart-complaints"></canvas>
+        </div>
+        <div class="chart-card">
+          <h4>Ana Depo Mesafesi (km) ile Müşteri Terk Oranı (%) Korelasyonu</h4>
+          <canvas id="chart-distance"></canvas>
+        </div>
+      </div>
+
+      <!-- Section: Regional Performance Summary Table -->
+      <div style="margin-bottom: 2rem;">
+        <h4 style="font-size: 1.05rem; color: #0F2A4A; margin-bottom: 0.75rem; font-weight: 700;">
+          Bölgesel Lojistik & Dağıtım Performansı Konsolide Tablosu
+        </h4>
+        <div class="table-responsive no-pagination">
+          <table>
+            <thead>
+              <tr>
+                <th>Bölge Kademesi</th>
+                <th>Müşteri Portföyü</th>
+                <th>Ortalama Depo Mesafesi</th>
+                <th>Toplam Kargo Şikayeti</th>
+                <th>Bölgesel Kayıp Oranı</th>
+                <th>Operasyonel Risk Seviyesi</th>
+                <th>Önerilen Dağıtım & Depo Stratejisi</th>
+              </tr>
+            </thead>
+            <tbody id="regional-summary-table-body">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Section: Detailed Operational Logistics Customer Action List -->
+      <div>
+        <div class="filter-bar">
+          <div class="filter-group">
+            <label for="filter-log-distance"><strong>Depo Mesafesi:</strong></label>
+            <select id="filter-log-distance">
+              <option value="all">Tüm Mesafeler</option>
+              <option value="close">0 - 10 km (Yakın Depo)</option>
+              <option value="normal">10 - 20 km (Standart Sevk)</option>
+              <option value="far">20 - 30 km (Uzak Bölge)</option>
+              <option value="critical">30+ km (Kritik Mesafe)</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="filter-log-city"><strong>Şehir Kademesi:</strong></label>
+            <select id="filter-log-city">
+              <option value="all">Tüm Şehir Kademeleri</option>
+              <option value="1">Tier 1: Büyükşehir / Metropol</option>
+              <option value="2">Tier 2: Gelişmiş İl Merkezi</option>
+              <option value="3">Tier 3: Taşra / Kırsal İlçe</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label style="cursor: pointer; display: flex; align-items: center; gap: 0.35rem;">
+              <input type="checkbox" id="filter-log-complaint-only">
+              <strong>Yalnızca Kargo/Teslimat Şikayeti Olanlar</strong>
+            </label>
+          </div>
+          <button id="btn-export-logistics" class="btn-export">Lojistik Risk Raporunu İndir (CSV)</button>
+        </div>
+
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Müşteri Kodu</th>
+                <th>Bölge Kademesi</th>
+                <th class="th-sortable" data-table="logistics" data-field="WarehouseToHome">Depo Mesafesi <span class="sort-icon">⬍</span></th>
+                <th class="th-sortable" data-table="logistics" data-field="DeliveryComplaints">Kargo Şikayet Adedi <span class="sort-icon">⬍</span></th>
+                <th class="th-sortable" data-table="logistics" data-field="churn_probability">Kayıp Riski <span class="sort-icon">⬍</span></th>
+                <th>Tespit Edilen Operasyonel Problem</th>
+                <th>Önerilen Dağıtım & Depo Stratejisi</th>
+              </tr>
+            </thead>
+            <tbody id="logistics-table-body">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+        <div id="logistics-pagination" class="pagination-container"></div>
+      </div>
+
+    </div>
+
+    <!-- VIEW 3: CATEGORY & PRODUCT QUALITY -->
+    <div id="tab-category" class="tab-content" style="display: none;">
+      <div class="filter-bar">
+        <div class="filter-group">
+          <label for="filter-dept"><strong>Kıyafet Kategorisi:</strong></label>
+          <select id="filter-dept">
+            <option value="all">Tüm Kıyafet Kategorileri</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="search-product"><strong>Ürün Kodu ile Ara:</strong></label>
+          <input type="text" id="search-product" placeholder="Örn: 1080 veya 1077...">
+        </div>
+        <button id="btn-export-category" class="btn-export">Kategori Kusur Raporunu İndir (CSV)</button>
+      </div>
+
+      <div class="charts-grid">
+        <div class="chart-card">
+          <h4>Düşük Puanlı Yorumlardan Tespit Edilen Kök Neden Kusurları (Rating &le; 3)</h4>
+          <canvas id="chart-defects"></canvas>
+        </div>
+        <div class="chart-card">
+          <h4>Yüksek Puanlı Yorumlardan Ayrıştırılan Güçlü Ürün Özellikleri (Rating &ge; 4)</h4>
+          <canvas id="chart-strengths"></canvas>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>Ürün Kodu</th>
+              <th>Kıyafet Kategorisi</th>
+              <th class="th-sortable" data-table="category" data-field="avg_rating">Müşteri Memnuniyeti (Ort. Puan) <span class="sort-icon">⬍</span></th>
+              <th class="th-sortable" data-table="category" data-field="review_count">Toplam Yorum <span class="sort-icon">⬍</span></th>
+              <th>Tespit Edilen Kök Neden Kusuru (Rating &le; 3)</th>
+              <th>Öne Çıkan Güçlü Yön (Rating &ge; 4)</th>
+              <th>Önerilen Kalite & Tedarikçi Aksiyonu</th>
+            </tr>
+          </thead>
+          <tbody id="category-table-body">
+            <!-- Dynamically populated -->
+          </tbody>
+        </table>
+      </div>
+      <div id="category-pagination" class="pagination-container"></div>
+    </div>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

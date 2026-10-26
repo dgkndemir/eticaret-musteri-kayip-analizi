@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.env
+venv/
+.venv/
+.DS_Store
+
+# Allow corporate default datasets in backend
+!backend/Musteriler.csv
+!backend/Sikayetler.csv
+!backend/Yorumlar.csv
