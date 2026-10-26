@@ -50,10 +50,9 @@ def get_available_models(api_key: str = None) -> list:
     # Fallback default models if no dynamic models could be listed
     if len(models_list) == 1:
         models_list.extend([
-            {"id": "gemini-2.5-flash", "name": "Google Gemini 2.5 Flash"},
-            {"id": "gemini-2.0-flash", "name": "Google Gemini 2.0 Flash"},
             {"id": "gemini-1.5-flash", "name": "Google Gemini 1.5 Flash"},
-            {"id": "gemini-2.0-flash-lite", "name": "Google Gemini 2.0 Flash Lite"}
+            {"id": "gemini-2.0-flash", "name": "Google Gemini 2.0 Flash"},
+            {"id": "gemini-1.5-pro", "name": "Google Gemini 1.5 Pro"}
         ])
 
     models_list.append({"id": "local", "name": "🖥️ Yerel Semantik LLM"})
@@ -63,24 +62,32 @@ def call_gemini_api(prompt: str, api_key: str = None, requested_model: str = Non
     if requested_model == "local":
         return None, "local"
 
-    key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    raw_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not raw_key:
+        print("[LLM] GEMINI_API_KEY tanımlı değil veya boş.")
+        return None, None
+
+    key = str(raw_key).strip().strip("'\"").strip()
     if not key:
         return None, None
 
     candidate_models = []
     if requested_model and requested_model not in ("auto", "local"):
-        candidate_models.append(requested_model.strip())
+        candidate_models.append(requested_model.replace("models/", "").strip())
 
     custom_env = os.getenv("GEMINI_MODEL")
     if custom_env and custom_env not in candidate_models:
-        candidate_models.append(custom_env.strip())
+        candidate_models.append(custom_env.replace("models/", "").strip())
 
-    # Fallback order across current active Google Gemini generations
-    for m in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
+    # Fallback order across current official Google Gemini models
+    for m in ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]:
         if m not in candidate_models:
             candidate_models.append(m)
 
-    headers = {"Content-Type": "application/json"}
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MedipolBI/1.0"
+    }
     payload = {
         "contents": [{
             "parts": [{"text": prompt}]
@@ -92,17 +99,26 @@ def call_gemini_api(prompt: str, api_key: str = None, requested_model: str = Non
     }
 
     for model_name in candidate_models:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
+        clean_model = model_name.replace("models/", "").strip()
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent?key={key}"
         try:
             req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers)
             with urllib.request.urlopen(req, timeout=12) as response:
                 result = json.loads(response.read().decode("utf-8"))
                 text = result.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
                 if text:
-                    return text, model_name
-        except urllib.error.HTTPError:
+                    print(f"[LLM] Başarılı model yanıtı alındı: {clean_model}")
+                    return text, clean_model
+        except urllib.error.HTTPError as e:
+            err_body = ""
+            try:
+                err_body = e.read().decode("utf-8", errors="ignore")
+            except Exception:
+                pass
+            print(f"[LLM] Gemini API HTTP {e.code} Hatası ({clean_model}): {err_body}")
             continue
-        except Exception:
+        except Exception as e:
+            print(f"[LLM] Gemini API Bağlantı Hatası ({clean_model}): {str(e)}")
             continue
 
     return None, None
