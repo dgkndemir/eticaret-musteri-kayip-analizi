@@ -250,7 +250,13 @@ def load_default_data():
 
 load_default_data()
 
+@app.get("/")
+@app.head("/")
+def root_check():
+    return {"message": "E-Commerce Decision Support API is running", "status": "ok"}
+
 @app.get("/health")
+@app.head("/health")
 def health_check():
     return {"status": "ok", "has_data": CACHED_ANALYSIS is not None}
 
