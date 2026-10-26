@@ -23,37 +23,41 @@ def load_dotenv_if_exists():
 load_dotenv_if_exists()
 
 def get_available_models(api_key: str = None) -> list:
-    key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    raw_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    key = str(raw_key).strip().strip("'\"").strip() if raw_key else None
+
     models_list = [
-        {"id": "auto", "name": "⚡ Otomatik En Uygun Model (Önerilen)"}
+        {"id": "auto", "name": "⚡ Otomatik (Google En Uygun Model)"}
     ]
 
     if key:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MedipolBI/1.0"
+        }
         try:
-            req = urllib.request.Request(url, headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=6) as response:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=8) as response:
                 result = json.loads(response.read().decode("utf-8"))
                 for m in result.get("models", []):
                     methods = m.get("supportedGenerationMethods", [])
                     if "generateContent" in methods:
-                        raw_id = m.get("name", "").replace("models/", "")
+                        raw_id = m.get("name", "").replace("models/", "").strip()
                         disp_name = m.get("displayName", raw_id)
-                        # Filter to text/content generation models
                         models_list.append({
                             "id": raw_id,
                             "name": f"Google {disp_name}"
                         })
+        except urllib.error.HTTPError as e:
+            err_msg = ""
+            try:
+                err_msg = e.read().decode("utf-8", errors="ignore")
+            except Exception:
+                pass
+            print(f"[LLM] Google Models API HTTP {e.code} Hatası: {err_msg}")
         except Exception as e:
-            print("Gemini model listesi API'den çekilemedi, varsayılanlar yükleniyor:", e)
-
-    # Fallback default models if no dynamic models could be listed
-    if len(models_list) == 1:
-        models_list.extend([
-            {"id": "gemini-1.5-flash", "name": "Google Gemini 1.5 Flash"},
-            {"id": "gemini-2.0-flash", "name": "Google Gemini 2.0 Flash"},
-            {"id": "gemini-1.5-pro", "name": "Google Gemini 1.5 Pro"}
-        ])
+            print(f"[LLM] Google Models API Hatası: {e}")
 
     models_list.append({"id": "local", "name": "🖥️ Yerel Semantik LLM"})
     return models_list
@@ -75,14 +79,35 @@ def call_gemini_api(prompt: str, api_key: str = None, requested_model: str = Non
     if requested_model and requested_model not in ("auto", "local"):
         candidate_models.append(requested_model.replace("models/", "").strip())
 
-    custom_env = os.getenv("GEMINI_MODEL")
-    if custom_env and custom_env not in candidate_models:
-        candidate_models.append(custom_env.replace("models/", "").strip())
+    # Google'ın resmi sisteminden anlık aktif modelleri çek
+    live_models = []
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MedipolBI/1.0"
+        }
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=6) as response:
+            result = json.loads(response.read().decode("utf-8"))
+            for m in result.get("models", []):
+                if "generateContent" in m.get("supportedGenerationMethods", []):
+                    mid = m.get("name", "").replace("models/", "").strip()
+                    if mid:
+                        live_models.append(mid)
+    except Exception as e:
+        print(f"[LLM] Canlı Google model listesi çekilirken uyarı: {e}")
 
-    # Fallback order across current official Google Gemini models
-    for m in ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]:
+    # Flash modelleri performans için öne, diğerlerini arkaya al
+    flash_models = [m for m in live_models if "flash" in m.lower()]
+    other_models = [m for m in live_models if "flash" not in m.lower()]
+    for m in (flash_models + other_models):
         if m not in candidate_models:
             candidate_models.append(m)
+
+    if not candidate_models:
+        print("[LLM] Çağrılabilecek aktif Google modeli bulunamadı.")
+        return None, None
 
     headers = {
         "Content-Type": "application/json",
