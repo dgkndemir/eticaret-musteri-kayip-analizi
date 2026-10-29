@@ -4,8 +4,9 @@ __pycache__/
 venv/
 .venv/
 .DS_Store
+.agent/
+.agents/
+scratch/
+*.csv
+!sample_data/*.csv
 
-# Allow corporate default datasets in backend
-!backend/Musteriler.csv
-!backend/Sikayetler.csv
-!backend/Yorumlar.csv

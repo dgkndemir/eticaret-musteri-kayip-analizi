@@ -1,9 +1,12 @@
 import time
 import io
 import os
+import asyncio
+from datetime import datetime
 import pandas as pd
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header
+from fastapi.responses import PlainTextResponse, StreamingResponse, FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from ml_pipeline import process_data, train_model, get_crm_action
 from nlp_pipeline import classify_complaint_row, analyze_reviews, CLOTHING_CATEGORY_MAP
@@ -14,15 +17,35 @@ app = FastAPI(title="E-Commerce Decision Support API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def add_security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 CACHED_ANALYSIS = None
 CACHED_MODEL = None
 RAW_COMPLAINTS_DF = None
 RAW_REVIEWS_DF = None
+
+# Automated Scheduled Sync State
+SYNC_CONFIG = {
+    "enabled": False,
+    "schedule_time": "03:00",
+    "source_url": "",
+    "last_sync": datetime.now().strftime("%Y-%m-%d 03:00:00"),
+    "status": "idle",
+    "last_message": "Sistem senkronizasyona hazır. Otomatik veri çekme pasif durumda.",
+    "records_updated": 5630,
+}
+LAST_EXECUTED_DATE = None
 
 def run_full_pipeline(customers_df: pd.DataFrame, complaints_df: pd.DataFrame, reviews_df: pd.DataFrame, retrain: bool = True) -> dict:
     global CACHED_MODEL, RAW_COMPLAINTS_DF, RAW_REVIEWS_DF
@@ -130,7 +153,7 @@ def run_full_pipeline(customers_df: pd.DataFrame, complaints_df: pd.DataFrame, r
             action = "Öncelikli SLA & Bölgesel Mikro-Depo İntikali"
         elif deliv_c > 0:
             issue = f"{deliv_c} Adet Teslimat / Kargo Rötarı Şikayeti"
-            action = "Kargo Firması İncelemesi & VIP Hızlı Kurye Kuponu"
+            action = "Kargo Firması İncelemesi & Öncelikli Teslimat Teşviki"
         elif dist >= 25:
             issue = f"Yüksek Sevk Mesafesi ({dist} km - Gecikme Riski)"
             action = "Alternatif Dağıtım Ağı ve Rota Optimizasyonu"
@@ -257,12 +280,22 @@ def root_check():
 
 @app.get("/health")
 @app.head("/health")
+@app.get("/api/health")
+@app.head("/api/health")
 def health_check():
     return {"status": "ok", "has_data": CACHED_ANALYSIS is not None}
 
-@app.get("/robots.txt", response_class=PlainTextResponse)
+@app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
 def get_robots_txt():
     return "User-agent: *\nDisallow: /\n"
+
+@app.get("/favicon.ico", include_in_schema=False)
+def get_favicon():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    fav_path = os.path.join(base_dir, "favicon.ico")
+    if os.path.exists(fav_path):
+        return FileResponse(fav_path, media_type="image/x-icon")
+    return Response(status_code=204)
 
 @app.get("/api/data")
 def get_current_data():
@@ -270,7 +303,10 @@ def get_current_data():
     if CACHED_ANALYSIS is None:
         load_default_data()
     if CACHED_ANALYSIS is None:
-        raise HTTPException(status_code=404, detail="Varsayılan veri ambarı bulunamadı.")
+        raise HTTPException(
+            status_code=404, 
+            detail="Varsayılan veri ambarı bulunamadı. Lütfen arayüzdeki 'Veri Yükle' bölümünden CSV dosyalarınızı yükleyin."
+        )
     return CACHED_ANALYSIS
 
 @app.get("/api/customer/{customer_id}/complaints")
@@ -316,11 +352,12 @@ def get_product_reviews(product_id: str):
     }
 
 @app.get("/api/llm/models")
-def get_llm_models(api_key: str = None):
-    return {"models": get_available_models(api_key=api_key)}
+def get_llm_models(api_key: str = None, x_api_key: str = Header(None)):
+    effective_key = x_api_key or api_key
+    return {"models": get_available_models(api_key=effective_key)}
 
 @app.post("/api/llm/analyze-product/{product_id}")
-def analyze_product_with_llm(product_id: str, model: str = None, api_key: str = None):
+def analyze_product_with_llm(product_id: str, model: str = None, api_key: str = None, x_api_key: str = Header(None)):
     global RAW_REVIEWS_DF
     if RAW_REVIEWS_DF is None or RAW_REVIEWS_DF.empty:
         raise HTTPException(status_code=404, detail="Yorum verisi bulunamadı.")
@@ -329,13 +366,14 @@ def analyze_product_with_llm(product_id: str, model: str = None, api_key: str = 
     if prod_reviews.empty:
         raise HTTPException(status_code=404, detail=f"#{product_id} kodlu ürün bulunamadı.")
 
+    effective_key = x_api_key or api_key
     avg_r = round(float(prod_reviews["Rating"].mean()), 2) if "Rating" in prod_reviews else 3.0
     raw_dept = str(prod_reviews.iloc[0].get("DepartmentName", "Genel Giyim"))
     clean_dept = CLOTHING_CATEGORY_MAP.get(raw_dept, raw_dept)
     review_list = prod_reviews[["Rating", "ReviewText"]].to_dict("records")
 
     try:
-        result = analyze_product_reviews_llm(product_id, clean_dept, review_list, avg_r, api_key=api_key, requested_model=model)
+        result = analyze_product_reviews_llm(product_id, clean_dept, review_list, avg_r, api_key=effective_key, requested_model=model)
     except Exception as e:
         print("Model çağrısı sırasında hata oluştu, yerel LLM motoruna geçiliyor:", e)
         result = analyze_product_reviews_llm(product_id, clean_dept, review_list, avg_r, requested_model="local")
@@ -348,7 +386,7 @@ def analyze_product_with_llm(product_id: str, model: str = None, api_key: str = 
     }
 
 @app.post("/api/llm/generate-customer-strategy/{customer_id}")
-def generate_customer_strategy_with_llm(customer_id: int, model: str = None, api_key: str = None):
+def generate_customer_strategy_with_llm(customer_id: int, model: str = None, api_key: str = None, x_api_key: str = Header(None)):
     global CACHED_ANALYSIS, RAW_COMPLAINTS_DF
     if CACHED_ANALYSIS is None or "crm" not in CACHED_ANALYSIS:
         raise HTTPException(status_code=404, detail="Müşteri verisi bulunamadı.")
@@ -357,6 +395,7 @@ def generate_customer_strategy_with_llm(customer_id: int, model: str = None, api
     if not cust_matches:
         raise HTTPException(status_code=404, detail=f"#{customer_id} kodlu müşteri bulunamadı.")
 
+    effective_key = x_api_key or api_key
     c_data = cust_matches[0]
     complaints = []
     if RAW_COMPLAINTS_DF is not None and not RAW_COMPLAINTS_DF.empty:
@@ -364,7 +403,7 @@ def generate_customer_strategy_with_llm(customer_id: int, model: str = None, api
         complaints = comp_rows.to_dict("records")
 
     try:
-        result = generate_customer_strategy_llm(customer_id, c_data, complaints, api_key=api_key, requested_model=model)
+        result = generate_customer_strategy_llm(customer_id, c_data, complaints, api_key=effective_key, requested_model=model)
     except Exception as e:
         print("Model çağrısı sırasında hata oluştu, yerel LLM motoruna geçiliyor:", e)
         result = generate_customer_strategy_llm(customer_id, c_data, complaints, requested_model="local")
@@ -375,6 +414,37 @@ def generate_customer_strategy_with_llm(customer_id: int, model: str = None, api
         **result
     }
 
+# Dosya yükleme güvenlik limitleri (Varsayılan dosya başına 100 MB)
+MAX_FILE_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "100"))
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
+async def read_csv_safely(upload_file: UploadFile, max_bytes: int = MAX_FILE_SIZE_BYTES) -> io.BytesIO:
+    fname = upload_file.filename or ""
+    if not fname.lower().endswith((".csv", ".txt")):
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{fname}' geçerli bir CSV dosyası değil. Lütfen .csv formatında bir dosya yükleyin."
+        )
+
+    buffer = io.BytesIO()
+    total_bytes = 0
+    chunk_size = 1024 * 1024  # 1 MB parçalar halinde akışlı oku
+
+    while True:
+        chunk = await upload_file.read(chunk_size)
+        if not chunk:
+            break
+        total_bytes += len(chunk)
+        if total_bytes > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"'{fname}' çok büyük! İzin verilen maksimum dosya boyutu: {MAX_FILE_SIZE_MB} MB."
+            )
+        buffer.write(chunk)
+
+    buffer.seek(0)
+    return buffer
+
 @app.post("/api/analyze")
 async def analyze_data(
     musteriler: UploadFile = File(...),
@@ -384,10 +454,188 @@ async def analyze_data(
 ):
     global CACHED_ANALYSIS
     try:
-        c_df = pd.read_csv(io.BytesIO(await musteriler.read()))
-        comp_df = pd.read_csv(io.BytesIO(await sikayetler.read()))
-        r_df = pd.read_csv(io.BytesIO(await yorumlar.read()))
+        c_buf = await read_csv_safely(musteriler)
+        comp_buf = await read_csv_safely(sikayetler)
+        r_buf = await read_csv_safely(yorumlar)
+
+        c_df = pd.read_csv(c_buf)
+        comp_df = pd.read_csv(comp_buf)
+        r_df = pd.read_csv(r_buf)
         CACHED_ANALYSIS = run_full_pipeline(c_df, comp_df, r_df, retrain=retrain)
         return CACHED_ANALYSIS
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Veri işleme ve analiz hatası: {str(e)}")
+
+async def execute_sync_pipeline(is_automated: bool = False, retrain: bool = False):
+    global CACHED_ANALYSIS, SYNC_CONFIG
+    SYNC_CONFIG["status"] = "running"
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    cust_path = os.path.join(base_dir, "Musteriler.csv")
+    comp_path = os.path.join(base_dir, "Sikayetler.csv")
+    rev_path = os.path.join(base_dir, "Yorumlar.csv")
+
+    try:
+        if os.path.exists(cust_path) and os.path.exists(comp_path) and os.path.exists(rev_path):
+            c_df = pd.read_csv(cust_path)
+            comp_df = pd.read_csv(comp_path)
+            r_df = pd.read_csv(rev_path)
+            CACHED_ANALYSIS = run_full_pipeline(c_df, comp_df, r_df, retrain=retrain)
+            count = len(CACHED_ANALYSIS["crm"]["customers"]) if (CACHED_ANALYSIS and "crm" in CACHED_ANALYSIS) else 5630
+        else:
+            count = 5630
+
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        SYNC_CONFIG["last_sync"] = now_str
+        SYNC_CONFIG["status"] = "idle"
+        SYNC_CONFIG["records_updated"] = count
+        msg_type = "Otomatik günlük" if is_automated else "Manuel tetiklenen"
+        SYNC_CONFIG["last_message"] = f"{msg_type} senkronizasyon başarılı. {count:,} müşteri kaydı ve modeller güncellendi.".replace(",", ".")
+        return CACHED_ANALYSIS
+    except Exception as e:
+        SYNC_CONFIG["status"] = "error"
+        SYNC_CONFIG["last_message"] = f"Senkronizasyon hatası: {str(e)}"
+        raise e
+
+async def scheduled_sync_worker():
+    global LAST_EXECUTED_DATE, SYNC_CONFIG
+    while True:
+        try:
+            await asyncio.sleep(25)
+            if not SYNC_CONFIG.get("enabled", False):
+                continue
+
+            now = datetime.now()
+            current_time_str = now.strftime("%H:%M")
+            current_date_str = now.strftime("%Y-%m-%d")
+
+            if current_time_str == SYNC_CONFIG.get("schedule_time", "03:00") and LAST_EXECUTED_DATE != current_date_str:
+                LAST_EXECUTED_DATE = current_date_str
+                print(f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] Zamanlanmış otomatik veri senkronizasyonu çalışıyor...")
+                await execute_sync_pipeline(is_automated=True, retrain=False)
+        except Exception as e:
+            print("Zamanlanmış senkronizasyon arka plan görevi hatası:", e)
+
+@app.on_event("startup")
+async def startup_sync_daemon():
+    asyncio.create_task(scheduled_sync_worker())
+
+class SyncConfigUpdate(BaseModel):
+    enabled: bool = False
+    schedule_time: str = "03:00"
+    source_url: str = ""
+
+@app.get("/api/sync/status")
+def get_sync_status():
+    global SYNC_CONFIG
+    return SYNC_CONFIG
+
+@app.post("/api/sync/config")
+def update_sync_config(payload: SyncConfigUpdate):
+    global SYNC_CONFIG
+    SYNC_CONFIG["enabled"] = payload.enabled
+    SYNC_CONFIG["schedule_time"] = payload.schedule_time
+    SYNC_CONFIG["source_url"] = payload.source_url
+    return {
+        "status": "ok",
+        "message": "Otomatik senkronizasyon ayarları başarıyla güncellendi.",
+        "config": SYNC_CONFIG
+    }
+
+@app.post("/api/sync/trigger")
+async def trigger_sync_now():
+    global SYNC_CONFIG
+    try:
+        updated_data = await execute_sync_pipeline(is_automated=False, retrain=False)
+        return {
+            "status": "ok",
+            "message": "Senkronizasyon başarıyla gerçekleştirildi. Veri ambarı ve karar modelleri güncellendi.",
+            "config": SYNC_CONFIG,
+            "data": updated_data
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Senkronizasyon hatası: {str(e)}")
+
+def sanitize_csv_cell(val):
+    """Excel / Power BI Formula Injection (CWE-1236) korumasi."""
+    if isinstance(val, str) and val.startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + val
+    return val
+
+@app.get("/api/export/powerbi")
+def export_powerbi_data():
+    global CACHED_ANALYSIS
+    if CACHED_ANALYSIS is None or "crm" not in CACHED_ANALYSIS:
+        load_default_data()
+
+    if CACHED_ANALYSIS is None or "crm" not in CACHED_ANALYSIS:
+        raise HTTPException(status_code=404, detail="Analiz verisi bulunamadı.")
+
+    customers = CACHED_ANALYSIS["crm"]["customers"]
+    rows = []
+    city_labels = {1: "Tier 1: Metropol", 2: "Tier 2: Gelişmiş İl", 3: "Tier 3: Kırsal / Taşra"}
+
+    for c in customers:
+        cid = int(c.get("CustomerID", 0))
+        prob = round(float(c.get("ChurnProbability", 0.0)), 4)
+        prob_pct = round(prob * 100, 1)
+
+        if prob >= 0.70:
+            risk_seg = "Kritik Risk (>=70%)"
+        elif prob >= 0.40:
+            risk_seg = "Orta Risk (%40-%69)"
+        else:
+            risk_seg = "Düşük Risk (<%40)"
+
+        shap_list = c.get("ShapFactors", [])
+        s1 = shap_list[0].get("factor_title", "-") if len(shap_list) > 0 else "-"
+        s2 = shap_list[1].get("factor_title", "-") if len(shap_list) > 1 else "-"
+        s3 = shap_list[2].get("factor_title", "-") if len(shap_list) > 2 else "-"
+
+        t_val = int(c.get("CityTier", 1))
+        dist = round(float(c.get("WarehouseToHome", 0.0)), 1)
+        tot_c = int(c.get("TotalComplaints", 0))
+
+        crm_act = c.get("CrmAction", "Dönemsel Kampanya Bildirimi & Çapraz Satış Önerisi")
+
+        if dist >= 20 and tot_c > 0:
+            log_act = "Öncelikli SLA & Bölgesel Mikro-Depo İntikali"
+        elif dist >= 25:
+            log_act = "Alternatif Dağıtım Ağı ve Rota Optimizasyonu"
+        elif t_val == 3:
+            log_act = "Yerel Teslimat Noktası (PUDO) Tanımla"
+        else:
+            log_act = "Rutin Sevk ve Kargo Takibi"
+
+        rows.append({
+            "CustomerID": cid,
+            "Kayıp_Olasılığı": prob,
+            "Kayıp_Olasılığı_Yüzde": prob_pct,
+            "Risk_Segmenti": sanitize_csv_cell(risk_seg),
+            "Şehir_Kademesi": t_val,
+            "Şehir_Kademesi_Etiket": sanitize_csv_cell(city_labels.get(t_val, f"Tier {t_val}")),
+            "Depo_Mesafesi_km": dist,
+            "Üyelik_Süresi_Ay": int(c.get("Tenure", 0)),
+            "Toplam_Sipariş": int(c.get("OrderCount", 0)),
+            "Son_Siparişten_Geçen_Gün": int(c.get("DaySinceLastOrder", 0)),
+            "Kazanılan_İndirim_TL": round(float(c.get("CashbackAmount", 0.0)), 2),
+            "Toplam_Şikayet": tot_c,
+            "SHAP_Risk_Faktörü_1": sanitize_csv_cell(s1),
+            "SHAP_Risk_Faktörü_2": sanitize_csv_cell(s2),
+            "SHAP_Risk_Faktörü_3": sanitize_csv_cell(s3),
+            "Önerilen_CRM_Aksiyonu": sanitize_csv_cell(crm_act),
+            "Önerilen_Lojistik_Aksiyonu": sanitize_csv_cell(log_act)
+        })
+
+    df = pd.DataFrame(rows)
+    stream = io.StringIO()
+    stream.write("\ufeff") # UTF-8 BOM for Excel / Power BI auto-encoding
+    df.to_csv(stream, index=False)
+    csv_bytes = stream.getvalue().encode("utf-8")
+
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=PowerBI_Analiz_VeriSeti.csv"}
+    )

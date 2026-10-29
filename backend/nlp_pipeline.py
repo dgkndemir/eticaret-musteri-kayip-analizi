@@ -27,15 +27,15 @@ CLOTHING_CATEGORY_MAP = {
 }
 
 DEFECT_LABELS = {
-    "kalip_darligi": "Kalıp / Beden Darlığı",
+    "kalip_darligi": "Beden/Kalıp Darlığı",
     "kumas_kusuru":  "Kumaş Kalitesizliği",
     "dikis_sorunu":  "Dikiş / Sökük Hatası",
     "fermuar":       "Fermuar / Düğme Arızası"
 }
 
 STRENGTH_LABELS = {
-    "kalip_uyumu":    "Muntazam Kalıp Uyumu",
-    "kumas_kalitesi": "Yüksek Kumaş Kalitesi"
+    "kalip_uyumu":    "Tam Kalıp Uyumu",
+    "kumas_kalitesi": "Kumaş Kalitesi"
 }
 
 DEFECT_KEYWORDS = {
@@ -155,7 +155,7 @@ def analyze_reviews(reviews_df: pd.DataFrame) -> dict:
             top_defect_key = max(pdata["defects"], key=pdata["defects"].get)
             top_strength_key = max(pdata["strengths"], key=pdata["strengths"].get)
 
-            top_defect_name = DEFECT_LABELS.get(top_defect_key, "Kalıp / Beden Darlığı") if pdata["defects"][top_defect_key] > 0 else "Kusur Bildirilmedi"
+            top_defect_name = DEFECT_LABELS.get(top_defect_key, "Beden/Kalıp Darlığı") if pdata["defects"][top_defect_key] > 0 else "Kusur Bildirilmedi"
             defect_cnt = pdata["defects"][top_defect_key]
             action = get_category_action(top_defect_name, avg_r, defect_cnt)
 
@@ -166,7 +166,7 @@ def analyze_reviews(reviews_df: pd.DataFrame) -> dict:
                 "review_count": len(pdata["ratings"]),
                 "top_defect": top_defect_name,
                 "defect_count": defect_cnt,
-                "top_strength": STRENGTH_LABELS.get(top_strength_key, "Muntazam Kalıp Uyumu") if pdata["strengths"][top_strength_key] > 0 else "Nötr Değerlendirme",
+                "top_strength": STRENGTH_LABELS.get(top_strength_key, "Tam Kalıp Uyumu") if pdata["strengths"][top_strength_key] > 0 else "Nötr Değerlendirme",
                 "strength_count": pdata["strengths"][top_strength_key],
                 "category_action": action
             })
@@ -177,5 +177,7 @@ def analyze_reviews(reviews_df: pd.DataFrame) -> dict:
         "by_department": by_department,
         "all_products": all_products,
         "overall_weak": {DEFECT_LABELS[k]: v for k, v in overall_weak.items()},
-        "overall_strong": {STRENGTH_LABELS[k]: v for k, v in overall_strong.items()}
+        "overall_strong": {STRENGTH_LABELS[k]: v for k, v in overall_strong.items()},
+        "top_defects": {DEFECT_LABELS[k]: v for k, v in overall_weak.items()},
+        "top_strengths": {STRENGTH_LABELS[k]: v for k, v in overall_strong.items()}
     }

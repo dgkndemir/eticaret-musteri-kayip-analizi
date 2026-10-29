@@ -27,14 +27,15 @@ def get_available_models(api_key: str = None) -> list:
     key = str(raw_key).strip().strip("'\"").strip() if raw_key else None
 
     models_list = [
-        {"id": "auto", "name": "⚡ Otomatik (Google En Uygun Model)"}
+        {"id": "auto", "name": "⚡ Otomatik (Gemini)"}
     ]
 
     if key:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+        url = "https://generativelanguage.googleapis.com/v1beta/models"
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MedipolBI/1.0"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "x-goog-api-key": key
         }
         try:
             req = urllib.request.Request(url, headers=headers)
@@ -82,10 +83,11 @@ def call_gemini_api(prompt: str, api_key: str = None, requested_model: str = Non
     # Google'ın resmi sisteminden anlık aktif modelleri çek
     live_models = []
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+        url = "https://generativelanguage.googleapis.com/v1beta/models"
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MedipolBI/1.0"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "x-goog-api-key": key
         }
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=6) as response:
@@ -111,7 +113,7 @@ def call_gemini_api(prompt: str, api_key: str = None, requested_model: str = Non
 
     headers = {
         "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MedipolBI/1.0"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
     payload = {
         "contents": [{
@@ -124,10 +126,16 @@ def call_gemini_api(prompt: str, api_key: str = None, requested_model: str = Non
     }
 
     for model_name in candidate_models:
-        clean_model = model_name.replace("models/", "").strip()
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent?key={key}"
+        raw_clean = model_name.replace("models/", "").strip()
+        clean_model = re.sub(r"[^a-zA-Z0-9\.\-_]", "", raw_clean)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent"
+        request_headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "x-goog-api-key": key
+        }
         try:
-            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers)
+            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=request_headers)
             with urllib.request.urlopen(req, timeout=12) as response:
                 result = json.loads(response.read().decode("utf-8"))
                 text = result.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
@@ -189,18 +197,18 @@ Lütfen bu metinleri derinlemesine analiz et ve aşağıdaki JSON şemasına har
     all_high_text = " ".join(high_reviews).lower()
 
     if any(k in all_low_text for k in ["tight", "small", "dar", "kalıp", "short", "narrow"]):
-        defects_found.append("Kalıp Darlığı ve Beden Uyumsuzluğu (Göğüs/bel orantısızlığı)")
+        defects_found.append("Beden/Kalıp Darlığı")
     if any(k in all_low_text for k in ["fabric", "cheap", "thin", "scratchy", "kumaş", "ince", "sert"]):
-        defects_found.append("Kumaş İnceliği ve Ten Temasında Sertlik Kusuru")
+        defects_found.append("Kumaş Kalitesizliği")
     if any(k in all_low_text for k in ["stitch", "seam", "dikiş", "sökük", "thread"]):
-        defects_found.append("Dikiş Sökülmesi ve İplik Dayanım Hataları")
+        defects_found.append("Dikiş / Sökük Hatası")
     if any(k in all_low_text for k in ["zipper", "zip", "fermuar", "button", "düğme"]):
-        defects_found.append("Fermuar Takılması ve Düğme Kalitesi Eksikliği")
+        defects_found.append("Fermuar / Aksesuar Kusuru")
 
     if any(k in all_high_text for k in ["fit", "flattering", "true to size", "comfortable", "rahat", "oturdu"]):
-        strengths_found.append("Vücut Formuna Mükemmel Oturan Dökümlü Kesim")
+        strengths_found.append("Tam Kalıp Uyumu")
     if any(k in all_high_text for k in ["quality", "soft", "silky", "yumuşak", "kalite", "dokusu"]):
-        strengths_found.append("Yumuşak Tuşeli ve Yüksek Kaliteli Kumaş Dokusu")
+        strengths_found.append("Kumaş Kalitesi")
 
     defect_str = " & ".join(defects_found) if defects_found else "Genel Tasarım ve Beklenti Farklılığı"
     strength_str = " & ".join(strengths_found) if strengths_found else "Günlük Kullanım Rahatlığı"
@@ -237,7 +245,10 @@ MÜŞTERİ PROFİLİ:
 {json.dumps(complaint_texts, ensure_ascii=False)}
 
 Lütfen bu müşteriyi platformda tutmak için aşağıdaki JSON şemasına harfiyen uygun TÜRKÇE strateji ve doğrudan müşteriye gönderilecek mesaj taslağını üret.
-ÖNEMLİ KURAL: Stratejide ve mesaj metninde KESİNLİKLE sabit TL tutarı (örn: 50 TL, 100 TL vb.) kullanma! Bunun yerine oransal indirimler (%15, %20, %25 vb.), 'Özel Sadakat Kuponu', 'Kargo Bedava Çeki' veya 'Telafi İndirimi' gibi avantajlar kullan. JSON dışına hiçbir şey yazma:
+ÖNEMLİ KURALLAR:
+1. Sistem otomatik bir kupon kodu üretme motoruna bağlı DEĞİLDİR. Bu nedenle mesaj metninde KESİNLİKLE uydurma kupon kodları (örn: COZUM20, INDIRIM15 vb.) ÜRETME! Bunun yerine 'hesabınıza tanımlanan indirim kuponunuz' ifadesini veya '[İNDİRİM_KODUNUZ]' yer tutucusunu kullan.
+2. Sabit TL tutarı (örn: 50 TL, 100 TL vb.) KESİNLİKLE yazma! Oransal indirim (%15, %20 vb.) veya 'Ücretsiz Kargo' gibi ifadeler kullan.
+3. JSON dışına hiçbir şey yazma:
 {{
   "risk_teshisi": "Müşterinin neden ayrılma eğiliminde olduğunun 2 cümlelik net tespiti",
   "onerilen_crm_stratejisi": "Bu müşteri için önerilen özel kurumsal CRM aksiyonu (TL tutarı içermeyen)",
@@ -264,12 +275,12 @@ Lütfen bu müşteriyi platformda tutmak için aşağıdaki JSON şemasına harf
         diag = f"Müşteri kısa sürede {comp_count} kez destek kaydı oluşturarak ciddi bir operasyonel aksaklık (sipariş/teslimat) yaşamış ve platformdan soğumuştur."
         strat = "Kıdemli Müşteri Deneyimi Ekibi İle İletişim & Özel Telafi İndirimi"
         channel = "Doğrudan Çağrı & SMS"
-        msg = f"Sayın Müşterimiz (#{customer_id}), siparişlerinizde yaşamış olduğunuz {comp_count} adet teknik aksaklıktan ötürü içtenlikle özür dileriz. Sorunlarınız çözülmüş olup sonraki alışverişinizde geçerli özel telafi indirim kuponunuz (KOD: COZUM25) hesabınıza tanımlanmıştır."
+        msg = f"Sayın Müşterimiz (#{customer_id}), siparişlerinizde yaşamış olduğunuz {comp_count} adet aksaklıktan ötürü içtenlikle özür dileriz. Yaşanan sorunlar incelenmiş olup sonraki alışverişinizde geçerli telafi indiriminiz hesabınıza tanımlanmıştır."
     elif tenure <= 1 and ord_count <= 1:
         diag = "Müşteri platforma yeni kayıt olup yalnızca 1 sipariş vermiş ve ilk deneyiminde oluşan sürtünme nedeniyle devamlılık sağlayamamıştır."
         strat = "İlk Alışveriş Onboarding Desteği & Hoş Geldin İndirim Kuponu"
         channel = "E-posta & Bildirim"
-        msg = f"Merhaba (#{customer_id}), ailemize yeni katıldığınız ilk siparişinizde yaşadığınız deneyimi geliştirmek istiyoruz. Size özel hoş geldin indirim kodunuz: HOSGELDIN20. Mutlu alışverişler dileriz!"
+        msg = f"Merhaba (#{customer_id}), ailemize katıldığınız ilk siparişinizde yaşadığınız deneyimi geliştirmek istiyoruz. Hesabınıza tanımlanan hoş geldin indirim kuponunuz ile sizi yeniden aramızda görmekten mutluluk duyarız!"
     else:
         diag = "Müşteri uzun süredir sipariş vermeyerek inaktif duruma geçmiş ve sepet terk eğilimi göstermektedir."
         strat = "Geri Kazanım (Win-Back) Kampanyası & Sepette %20 İndirim"

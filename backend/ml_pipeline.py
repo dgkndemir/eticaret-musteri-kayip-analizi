@@ -24,42 +24,48 @@ FACTOR_TEMPLATES = {
 }
 
 def get_crm_action(churn_prob: float, total_complaints: int, days_since_last_order: int, order_count: int, tenure: int, cashback: float, city_tier: int = 1, dist: float = 0.0) -> str:
-    # 1. High Churn Risk (>= 70%)
-    if churn_prob >= 0.70:
-        if total_complaints >= 5:
-            return "Kıdemli Müşteri Hizmetleri İle Çağrı & Özel Telafi İndirimi"
-        elif total_complaints > 0:
-            return "Özür İletişimi & Kargo/Hizmet İade Kuponu"
-        elif order_count <= 1 and tenure <= 1:
-            return "İlk Alışveriş Memnuniyet Anketi & Hoş Geldin İndirim Kuponu"
-        elif days_since_last_order >= 10:
-            return "Seni Özledik (Win-Back) Kampanyası & Sepette %20 İndirim"
-        elif city_tier == 3 or dist >= 20:
-            return "Kırsal Bölge Teşviki & Sonraki Siparişlerde Ücretsiz Kargo"
-        elif cashback < 130:
-            return "Kişiselleştirilmiş Sepet İndirimi & Sadakat Kuponu Tanımlama"
-        else:
-            return "Geri Kazanım Kampanyası & Özel İndirim Kodu"
+    # 1. Yeni Müşteri & Onboarding (Kritik ilk alışveriş deneyimi)
+    if tenure <= 1 and days_since_last_order <= 7:
+        return "Hoş Geldin Teşviki & 2. Siparişe Özel %15 İndirim"
+    elif tenure <= 1 and days_since_last_order > 7:
+        return "İlk Alışveriş Deneyim Anketi & Yeniden Etkileşim"
 
-    # 2. Medium Churn Risk (40% - 69%)
-    elif churn_prob >= 0.40:
-        if total_complaints > 0:
-            return "Şikayet Çözüm Doğrulama Bildirimi & Telafi İndirim Kodu"
-        elif days_since_last_order >= 7:
-            return "Favori Ürün Fiyat İndirimi Hatırlatma E-postası"
-        elif order_count <= 2:
-            return "İkinci Siparişe Özel %15 İndirim Kodu"
-        else:
-            return "Dönemsel Kampanya Bildirimi & Sepet Tamamlama Hatırlatması"
+    # 2. Uzun Süreli Hareketsizlik (Win-Back / Uyuyan Müşteri)
+    if days_since_last_order >= 20:
+        return "Seni Özledik (Win-Back) Kampanyası & Sepet İndirimi"
+    elif days_since_last_order >= 12 and churn_prob >= 0.50:
+        return "Favori Ürün Fiyat İndirimi & Geri Kazanım Bildirimi"
 
-    # 3. Low Churn Risk (< 40% - Healthy / Loyal)
-    else:
-        if order_count >= 5:
-            return "Sadakat Kulübü Özel İndirimi & Yeni Sezon Erken Erişim"
-        elif tenure >= 12:
-            return "Yıl Dönümü Teşekkürü & Çift Kat Puan Kazanımı"
+    # 3. Lojistik ve Mesafe Kaynaklı Darboğaz
+    if (dist >= 25 or city_tier == 3) and churn_prob >= 0.50:
+        return "Lojistik Teşviki: Sonraki Siparişlerde Ücretsiz Kargo"
+
+    # 4. Şikayet Durumu (Yalnızca şikayet birincil sorunsa)
+    if total_complaints >= 5 and churn_prob >= 0.60:
+        return "Kıdemli Müşteri Deneyimi Ekibi Bireysel Çözüm Araması"
+    elif total_complaints >= 2 and days_since_last_order <= 10:
+        return "Şikayet Çözüm Takibi & Memnuniyet Özrü"
+
+    # 5. Düzenli / Çoklu Sipariş Veren Müşteri Tutundurma
+    if order_count >= 4:
+        if churn_prob >= 0.50:
+            return "Düzenli Müşteri Tutundurma Paketi & Özel Kampanya Bildirimi"
         else:
-            return "Rutin Bülten Bildirimi & Çapraz Satış Önerisi"
+            return "Sadakat Puanı Teşviki & Yeni Sezon Avantajı"
+
+    # 6. Tek Siparişli Müşteri Tutundurma
+    if order_count == 1:
+        return "2. Sipariş Teşvik Kuponu & Kategori Önerisi"
+
+    # 7. Fiyat ve İndirim Hassasiyeti
+    if cashback < 130 and churn_prob >= 0.50:
+        return "Kişiselleştirilmiş Cashback & Sepet İndirimi"
+
+    # 8. Rutin Sadık ve Düşük Riskli Müşteriler
+    if tenure >= 12:
+        return "Yıl Dönümü Teşekkür Bildirimi & Sadakat Puanı"
+
+    return "Dönemsel Kampanya Bildirimi & Çapraz Satış Önerisi"
 
 def process_data(customers_df: pd.DataFrame, complaints_df: pd.DataFrame = None, reviews_df: pd.DataFrame = None) -> pd.DataFrame:
     df = customers_df.copy()
@@ -132,12 +138,12 @@ def train_model(df: pd.DataFrame, existing_model=None, retrain: bool = True) -> 
         roc_auc = float(roc_auc_score(y_test, y_pred_proba_test))
         f1 = float(f1_score(y_test, y_pred_test))
     else:
-        pos_weight = (len(y_train) - sum(y_train)) / max(sum(y_train), 1)
+        # Dengeli ceza katsayisi (Yapay %99 patlamasini onleyen kalibrasyon)
         model = XGBClassifier(
             n_estimators=100,
             max_depth=4,
             learning_rate=0.08,
-            scale_pos_weight=pos_weight,
+            scale_pos_weight=1.75,
             eval_metric="logloss",
             random_state=42
         )
@@ -147,7 +153,23 @@ def train_model(df: pd.DataFrame, existing_model=None, retrain: bool = True) -> 
         roc_auc = float(roc_auc_score(y_test, y_pred_proba_test))
         f1 = float(f1_score(y_test, y_pred_test))
 
-    all_prob = model.predict_proba(X)[:, 1]
+    raw_prob = model.predict_proba(X)[:, 1]
+    all_prob = np.copy(raw_prob)
+
+    # Aktif Müşteri ve Onboarding Gerçekçilik Kalibrasyonu (Business Calibration):
+    for i in range(len(df)):
+        ten = float(df.iloc[i].get("Tenure", 0))
+        days = float(df.iloc[i].get("DaySinceLastOrder", 0))
+        comp = float(df.iloc[i].get("Complain", 0))
+        tot_c = float(df.iloc[i].get("TotalComplaints", 0))
+        ord_c = float(df.iloc[i].get("OrderCount", 1))
+
+        # 1. Yeni kayitli (<=1 ay), sikayetsiz ve yakin zamanda siparis vermis aktif musteri:
+        if ten <= 1 and days <= 7 and comp == 0 and tot_c == 0:
+            all_prob[i] = min(float(raw_prob[i]) * 0.25, 0.22)
+        # 2. Son siparisini cok yakin zamanda (<=3 gun) vermis sikayetsiz coklu siparisli musteri:
+        elif days <= 3 and comp == 0 and tot_c == 0 and ord_c >= 2:
+            all_prob[i] = min(float(raw_prob[i]) * 0.40, 0.35)
 
     explainer = shap.TreeExplainer(model)
     shap_values = explainer.shap_values(X)
@@ -175,8 +197,28 @@ def train_model(df: pd.DataFrame, existing_model=None, retrain: bool = True) -> 
 
     for i in range(len(X)):
         row_vals = shap_values[i]
-        scores = [abs(row_vals[k]) * actionable_weights.get(feature_names[k], 1.0) for k in range(len(feature_names))]
-        top_indices = np.argsort(scores)[::-1][:3]
+        # Yalnizca ayrilma riskini artiran (SHAP > 0) negatif etkenleri sec
+        positive_risks = []
+        for k in range(len(feature_names)):
+            impact = row_vals[k]
+            w = actionable_weights.get(feature_names[k], 1.0)
+            if impact > 0: # Riski dogrudan tetikleyen faktor
+                positive_risks.append((impact * w, k))
+
+        # Riski en cok artiran ilk 3 faktoru sirala
+        positive_risks.sort(key=lambda x: x[0], reverse=True)
+        top_indices = [c[1] for c in positive_risks[:3]]
+
+        # Cok sadik musterilerde 3'ten az pozitif risk varsa, en yuksek etkiye sahip digerlerini ekle
+        if len(top_indices) < 3:
+            remaining = [(abs(row_vals[k]) * actionable_weights.get(feature_names[k], 1.0), k) 
+                         for k in range(len(feature_names)) if k not in top_indices]
+            remaining.sort(key=lambda x: x[0], reverse=True)
+            for _, rem_k in remaining:
+                top_indices.append(rem_k)
+                if len(top_indices) == 3:
+                    break
+
         factors = []
 
         for idx in top_indices:
