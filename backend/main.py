@@ -257,19 +257,29 @@ def run_full_pipeline(customers_df: pd.DataFrame, complaints_df: pd.DataFrame, r
 def load_default_data():
     global CACHED_ANALYSIS
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    cust_path = os.path.join(base_dir, "Musteriler.csv")
-    comp_path = os.path.join(base_dir, "Sikayetler.csv")
-    rev_path = os.path.join(base_dir, "Yorumlar.csv")
+    candidates = [
+        base_dir,
+        os.path.join(os.path.dirname(base_dir), "sample_data"),
+        os.path.join(base_dir, "sample_data")
+    ]
 
-    if os.path.exists(cust_path) and os.path.exists(comp_path) and os.path.exists(rev_path):
-        print("Loading default corporate datasets from disk...")
-        c_df = pd.read_csv(cust_path)
-        comp_df = pd.read_csv(comp_path)
-        r_df = pd.read_csv(rev_path)
+    target_dir = None
+    for c_dir in candidates:
+        if (os.path.exists(os.path.join(c_dir, "Musteriler.csv")) and 
+            os.path.exists(os.path.join(c_dir, "Sikayetler.csv")) and 
+            os.path.exists(os.path.join(c_dir, "Yorumlar.csv"))):
+            target_dir = c_dir
+            break
+
+    if target_dir:
+        print(f"Loading default datasets from: {target_dir}")
+        c_df = pd.read_csv(os.path.join(target_dir, "Musteriler.csv"))
+        comp_df = pd.read_csv(os.path.join(target_dir, "Sikayetler.csv"))
+        r_df = pd.read_csv(os.path.join(target_dir, "Yorumlar.csv"))
         CACHED_ANALYSIS = run_full_pipeline(c_df, comp_df, r_df, retrain=True)
         print("Default analysis loaded successfully!")
     else:
-        print("Default datasets not found in backend directory.")
+        print("Default datasets not found in backend or sample_data directory.")
 
 load_default_data()
 
@@ -461,7 +471,8 @@ async def analyze_data(
         c_df = pd.read_csv(c_buf)
         comp_df = pd.read_csv(comp_buf)
         r_df = pd.read_csv(r_buf)
-        CACHED_ANALYSIS = run_full_pipeline(c_df, comp_df, r_df, retrain=retrain)
+        # CPU-heavy model egitimini ayri worker thread'de calistir (Event Loop kilitlenmesini onler)
+        CACHED_ANALYSIS = await asyncio.to_thread(run_full_pipeline, c_df, comp_df, r_df, retrain=retrain)
         return CACHED_ANALYSIS
     except HTTPException:
         raise
@@ -472,15 +483,24 @@ async def execute_sync_pipeline(is_automated: bool = False, retrain: bool = Fals
     global CACHED_ANALYSIS, SYNC_CONFIG
     SYNC_CONFIG["status"] = "running"
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    cust_path = os.path.join(base_dir, "Musteriler.csv")
-    comp_path = os.path.join(base_dir, "Sikayetler.csv")
-    rev_path = os.path.join(base_dir, "Yorumlar.csv")
+    candidates = [
+        base_dir,
+        os.path.join(os.path.dirname(base_dir), "sample_data"),
+        os.path.join(base_dir, "sample_data")
+    ]
+    target_dir = None
+    for c_dir in candidates:
+        if (os.path.exists(os.path.join(c_dir, "Musteriler.csv")) and 
+            os.path.exists(os.path.join(c_dir, "Sikayetler.csv")) and 
+            os.path.exists(os.path.join(c_dir, "Yorumlar.csv"))):
+            target_dir = c_dir
+            break
 
     try:
-        if os.path.exists(cust_path) and os.path.exists(comp_path) and os.path.exists(rev_path):
-            c_df = pd.read_csv(cust_path)
-            comp_df = pd.read_csv(comp_path)
-            r_df = pd.read_csv(rev_path)
+        if target_dir:
+            c_df = pd.read_csv(os.path.join(target_dir, "Musteriler.csv"))
+            comp_df = pd.read_csv(os.path.join(target_dir, "Sikayetler.csv"))
+            r_df = pd.read_csv(os.path.join(target_dir, "Yorumlar.csv"))
             CACHED_ANALYSIS = run_full_pipeline(c_df, comp_df, r_df, retrain=retrain)
             count = len(CACHED_ANALYSIS["crm"]["customers"]) if (CACHED_ANALYSIS and "crm" in CACHED_ANALYSIS) else 5630
         else:

@@ -784,11 +784,54 @@ btnSubmitUpload.addEventListener("click", async () => {
   formData.append("yorumlar", fileRev.files[0]);
   formData.append("retrain", isRetrain ? "true" : "false");
 
-  modalStatus.style.display = "block";
-  modalStatus.textContent = isRetrain
-    ? "Yeni veriler işleniyor ve XGBoost modeli sıfırdan eğitiliyor..."
-    : "Yeni veriler mevcut model ile hızla analiz ediliyor ve skorlanıyor...";
+  const statusBox = document.getElementById("modal-status");
+  const statusTitle = document.getElementById("modal-status-title");
+  const statusMsg = document.getElementById("modal-status-msg");
+  const btnText = document.getElementById("btn-submit-upload-text");
+  const btnIcon = document.getElementById("btn-submit-upload-icon");
+
+  if (statusBox) {
+    statusBox.style.display = "block";
+    statusBox.style.background = "#f0f9ff";
+    statusBox.style.borderColor = "#bae6fd";
+    statusBox.style.color = "#0369a1";
+  }
+  if (statusTitle) statusTitle.textContent = isRetrain ? "Yapay Zeka Modelleri Eğitiliyor" : "Hızlı Skorlama ve Analiz Yapılıyor";
+  if (btnText) btnText.textContent = "Analiz Sürüyor (Lütfen Bekleyin)...";
+  if (btnIcon) btnIcon.textContent = "⏳";
   btnSubmitUpload.disabled = true;
+
+  // Sayfanın üstündeki bildirim çubuğunu da güncelle
+  const alertBanner = document.getElementById("server-alert-banner");
+  const alertMessage = document.getElementById("server-alert-message");
+  const alertSpinner = document.getElementById("server-alert-spinner");
+  if (alertBanner) {
+    alertBanner.style.display = "flex";
+    alertBanner.className = "server-alert-banner waking";
+    if (alertSpinner) alertSpinner.style.display = "block";
+    if (alertMessage) alertMessage.innerHTML = "⏳ <strong>Analiz İşlemi Başlatıldı:</strong> CSV dosyaları işleniyor ve yapay zeka modelleri eğitiliyor (~25-45 sn sürebilir)...";
+  }
+
+  // Kullanıcıyı rahatlatan dinamik aşama mesajları
+  const stages = isRetrain ? [
+    "1/4: 📁 CSV veri kümeleri aktarılıyor ve doğrulanıyor...",
+    "2/4: 🧠 XGBoost modeli eğitiliyor ve ROC-AUC skoru hesaplanıyor...",
+    "3/4: ⚖️ SHAP TreeExplainer ile 5.630 müşterinin risk faktörleri çıkarılıyor...",
+    "4/4: 🔍 NLP motoru 23.000+ müşteri yorumundaki kusurları ayrıştırıyor...",
+    "⚡ Sonuçlar konsolide ediliyor ve gösterge paneli hazırlanıyor..."
+  ] : [
+    "1/3: 📁 CSV veri kümeleri aktarılıyor ve doğrulanıyor...",
+    "2/3: 🧠 Mevcut model ile müşteri kayıp riskleri hesaplanıyor...",
+    "3/3: 🔍 NLP motoru müşteri yorumlarını ve şikayetleri ayrıştırıyor...",
+    "⚡ Gösterge paneli güncelleniyor..."
+  ];
+
+  let stageIdx = 0;
+  if (statusMsg) statusMsg.textContent = stages[0];
+  const stageInterval = setInterval(() => {
+    stageIdx = (stageIdx + 1) % stages.length;
+    if (statusMsg) statusMsg.textContent = stages[stageIdx];
+  }, 6500);
 
   try {
     const response = await fetch(`${API_URL}/api/analyze`, {
@@ -803,23 +846,34 @@ btnSubmitUpload.addEventListener("click", async () => {
 
     analysisData = await response.json();
     renderDashboard(analysisData);
-    modalUpload.style.display = "none";
-    modalStatus.style.display = "none";
-    btnSubmitUpload.disabled = false;
+    clearInterval(stageInterval);
 
-    const alertBanner = document.getElementById("server-alert-banner");
-    const alertMessage = document.getElementById("server-alert-message");
-    const alertSpinner = document.getElementById("server-alert-spinner");
+    modalUpload.style.display = "none";
+    if (statusBox) statusBox.style.display = "none";
+    btnSubmitUpload.disabled = false;
+    if (btnText) btnText.textContent = "Verileri Entegre Et ve Analiz Et";
+    if (btnIcon) btnIcon.textContent = "🚀";
+
     if (alertBanner) {
       alertBanner.className = "server-alert-banner success";
       if (alertSpinner) alertSpinner.style.display = "none";
       if (alertMessage) alertMessage.innerHTML = "✔ <strong>Veriler Başarıyla Yüklendi ve Analiz Edildi!</strong> Gösterge paneli güncellendi.";
-      setTimeout(() => { alertBanner.style.display = "none"; }, 3500);
+      setTimeout(() => { alertBanner.style.display = "none"; }, 4000);
     }
   } catch (error) {
-    alert(`Analiz başarısız oldu: ${error.message}`);
-    modalStatus.style.display = "none";
+    clearInterval(stageInterval);
     btnSubmitUpload.disabled = false;
+    if (btnText) btnText.textContent = "Verileri Entegre Et ve Analiz Et";
+    if (btnIcon) btnIcon.textContent = "🚀";
+
+    if (statusBox) {
+      statusBox.style.background = "#fef2f2";
+      statusBox.style.borderColor = "#fecaca";
+      statusBox.style.color = "#b91c1c";
+      if (statusTitle) statusTitle.textContent = "Analiz Başarısız Oldu";
+      if (statusMsg) statusMsg.textContent = error.message;
+    }
+    alert(`Analiz başarısız oldu: ${error.message}`);
   }
 });
 
