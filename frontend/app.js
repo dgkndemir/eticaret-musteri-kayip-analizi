@@ -816,8 +816,8 @@ btnSubmitUpload.addEventListener("click", async () => {
   const stages = isRetrain ? [
     "1/4: 📁 CSV veri kümeleri aktarılıyor ve doğrulanıyor...",
     "2/4: 🧠 XGBoost modeli eğitiliyor ve ROC-AUC skoru hesaplanıyor...",
-    "3/4: ⚖️ SHAP TreeExplainer ile 5.630 müşterinin risk faktörleri çıkarılıyor...",
-    "4/4: 🔍 NLP motoru 23.000+ müşteri yorumundaki kusurları ayrıştırıyor...",
+    "3/4: ⚖️ SHAP TreeExplainer ile müşteri risk belirleyicileri hesaplanıyor...",
+    "4/4: 🔍 NLP motoru müşteri yorumlarındaki kusur ve güçlü yönleri ayrıştırıyor...",
     "⚡ Sonuçlar konsolide ediliyor ve gösterge paneli hazırlanıyor..."
   ] : [
     "1/3: 📁 CSV veri kümeleri aktarılıyor ve doğrulanıyor...",
